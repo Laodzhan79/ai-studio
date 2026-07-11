@@ -15,7 +15,7 @@ with open("agents_config.json", "r", encoding="utf-8") as f:
     agents = {agent["id"]: agent for agent in config["agents"]}
 
 def call_agent(agent_id, user_message):
-    """Вызывает AI агента через DeepSeek API"""
+    """Вызывает AI агента через DeepSeek API с обработкой ошибок"""
     agent = agents.get(agent_id)
     if not agent:
         return f"❌ Агент {agent_id} не найден"
@@ -23,7 +23,7 @@ def call_agent(agent_id, user_message):
     # Формируем промпт
     prompt = f"{agent['prompt']}\n\nПользователь: {user_message}\n\nОтвет:"
     
-    # Вызов DeepSeek API (или заменяем на другой AI)
+    # Вызов DeepSeek API
     try:
         response = requests.post(
             "https://api.deepseek.com/v1/chat/completions",
@@ -34,13 +34,35 @@ def call_agent(agent_id, user_message):
             json={
                 "model": "deepseek-chat",
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.7
-            }
+                "temperature": 0.7,
+                "max_tokens": 2000
+            },
+            timeout=30
         )
+        
+        # Проверяем статус ответа
+        if response.status_code != 200:
+            error_detail = response.text
+            return f"⚠️ Ошибка API (код {response.status_code}): {error_detail[:200]}"
+        
+        # Парсим ответ
         result = response.json()
+        
+        # Проверяем наличие ключа 'choices'
+        if "choices" not in result or not result["choices"]:
+            return f"⚠️ API вернул пустой ответ: {result}"
+        
+        # Возвращаем текст ответа
         return result["choices"][0]["message"]["content"]
+        
+    except requests.exceptions.Timeout:
+        return "⚠️ Превышено время ожидания ответа от API. Попробуй позже."
+    except requests.exceptions.RequestException as e:
+        return f"⚠️ Ошибка сети: {str(e)[:100]}"
+    except KeyError as e:
+        return f"⚠️ Неожиданный формат ответа API: {str(e)}"
     except Exception as e:
-        return f"⚠️ Ошибка: {str(e)}"
+        return f"⚠️ Неизвестная ошибка: {str(e)[:100]}"
 
 def send_telegram_message(text, chat_id=CHAT_ID):
     """Отправляет сообщение в Telegram"""
