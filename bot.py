@@ -1,12 +1,12 @@
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
-import os
 from orchestrator import process_message
 
 TOKEN = os.getenv("TELEGRAM_TOKEN", "7836254185:AAE-qjm_NYrsq6lNyIRH1laKdyWZEcnFZ8g")
 
 async def start(update: Update, context: CallbackContext):
-    """Обработчик команды /start"""
+    """Кнопки выбора агента"""
     keyboard = [
         [InlineKeyboardButton("🧠 Стратег", callback_data="strategist")],
         [InlineKeyboardButton("🔍 Исследователь", callback_data="researcher")],
@@ -15,41 +15,34 @@ async def start(update: Update, context: CallbackContext):
         [InlineKeyboardButton("💻 Разработчик", callback_data="developer")],
         [InlineKeyboardButton("📊 Менеджер", callback_data="pm")]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
     await update.message.reply_text(
-        "👋 Привет! Я твой AI-штаб. Выбери агента или просто напиши вопрос.\n\n"
-        "Команды: /team, /help",
-        reply_markup=reply_markup
+        "👋 Привет! Я твой AI-штаб.\nВыбери агента или просто напиши вопрос.\n\n/team — показать команду",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 async def handle_message(update: Update, context: CallbackContext):
-    """Обработка всех текстовых сообщений"""
+    """Обрабатывает текстовые сообщения"""
     user_message = update.message.text
     response = process_message(user_message)
     await update.message.reply_text(response, parse_mode="Markdown")
 
 async def button_callback(update: Update, context: CallbackContext):
-    """Обработка нажатий на кнопки"""
+    """Кнопка выбрана — просим написать запрос"""
     query = update.callback_query
     await query.answer()
-    
-    agent_id = query.data
     await query.edit_message_text(
-        f"🤖 Агент {agent_id} выбран.\n\nНапиши свой запрос прямо в чат."
+        f"🤖 Агент {query.data} выбран.\nНапиши свой запрос прямо сюда."
     )
 
-# === ЗАПУСК БОТА ===
 def main():
     app = Application.builder().token(TOKEN).build()
-    
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("team", start))  # team вызывает то же самое
+    app.add_handler(CommandHandler("team", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("🤖 Бот запущен!")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    print("🤖 Бот запущен и слушает сообщения...")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
