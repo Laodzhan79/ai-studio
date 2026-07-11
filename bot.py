@@ -10,7 +10,7 @@ from telegram.ext import (
 )
 from orchestrator import process_message
 
-TOKEN = os.getenv("TELEGRAM_TOKEN", "7836254185:AAE-qjm_NYrsq6lNyIRH1laKdyWZEcnFZ8g")
+TOKEN = os.getenv("TELEGRAM_TOKEN", "REPLACED")
 
 async def start(update: Update, context: CallbackContext):
     """Кнопки выбора агента"""
