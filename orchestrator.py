@@ -6,7 +6,7 @@ from datetime import datetime
 
 # === НАСТРОЙКИ ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "REPLACED")
-CHAT_ID = os.getenv("CHAT_ID", "")
+CHAT_ID = os.getenv("CHAT_ID", "REPLACED")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "твой_ключ_здесь")  # Бесплатно на platform.deepseek.com
 
 # === ЗАГРУЗКА КОНФИГА ===
