@@ -1,6 +1,13 @@
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    CallbackContext,
+    CallbackQueryHandler  # <-- ЭТОТ ИМПОРТ БЫЛ ПРОПУЩЕН!
+)
 from orchestrator import process_message
 
 TOKEN = os.getenv("TELEGRAM_TOKEN", "7836254185:AAE-qjm_NYrsq6lNyIRH1laKdyWZEcnFZ8g")
@@ -39,7 +46,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("team", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(CallbackQueryHandler(button_callback))
+    app.add_handler(CallbackQueryHandler(button_callback))  # <-- Теперь работает!
     
     print("🤖 Бот запущен и слушает сообщения...")
     app.run_polling()
