@@ -31,7 +31,7 @@ async def handle_message(update: Update, context: CallbackContext):
     """Обрабатывает текстовые сообщения"""
     user_message = update.message.text
     response = process_message(user_message)
-    await update.message.reply_text(response, parse_mode="Markdown")
+    await update.message.reply_text(response)
 
 async def button_callback(update: Update, context: CallbackContext):
     """Кнопка выбрана — просим написать запрос"""
