@@ -1,4 +1,5 @@
 import os
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -9,6 +10,9 @@ from telegram.ext import (
     CallbackQueryHandler  # <-- ЭТОТ ИМПОРТ БЫЛ ПРОПУЩЕН!
 )
 from orchestrator import process_message
+# Настройка логов
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("TELEGRAM_TOKEN", "REPLACED")
 
@@ -26,12 +30,39 @@ async def start(update: Update, context: CallbackContext):
         "👋 Привет! Я твой AI-штаб.\nВыбери агента или просто напиши вопрос.\n\n/team — показать команду",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+async def send_long_message(update: Update, text: str):
+    """Отправляет длинное сообщение, разбивая на части при необходимости"""
+    MAX_LENGTH = 4000  # Чуть меньше лимита Telegram (4096)
+    
+    # Если текст короткий — отправляем как есть
+    if len(text) <= MAX_LENGTH:
+        await update.message.reply_text(text)
+        return
+    
+    # Если длинный — разбиваем по предложениям
+    parts = []
+    current_part = ""
+    
+    for sentence in text.split('. '):
+        if len(current_part) + len(sentence) + 2 <= MAX_LENGTH:
+            current_part += sentence + '. '
+        else:
+            parts.append(current_part.strip())
+            current_part = sentence + '. '
+    
+    if current_part:
+        parts.append(current_part.strip())
+    
+    # Отправляем все части по очереди
+    for part in parts:
+        await update.message.reply_text(part)
 
 async def handle_message(update: Update, context: CallbackContext):
-    """Обрабатывает текстовые сообщения"""
     user_message = update.message.text
     response = process_message(user_message)
-    await update.message.reply_text(response)
+    
+    # Используем новую функцию для отправки
+    await send_long_message(update, response)
 
 async def button_callback(update: Update, context: CallbackContext):
     """Кнопка выбрана — просим написать запрос"""

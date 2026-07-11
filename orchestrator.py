@@ -7,7 +7,7 @@ import google.generativeai as genai
 # === НАСТРОЙКИ ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "REPLACED")
 CHAT_ID = os.getenv("CHAT_ID", "REPLACED")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AQ.Ab8RN6LdBY_9U1LjoV7UAqyyNfr-wx5qKJQRMPrauGj1n4PC0g")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "REPLACED")
 
 # Настройка Gemini (старая библиотека, но она работает с v1beta)
 genai.configure(api_key=GEMINI_API_KEY)
@@ -40,6 +40,8 @@ def send_telegram_message(text, chat_id=CHAT_ID):
     requests.post(url, json=payload)
 
 def get_agent_by_command(text):
+    """Определяет агента по команде или ключевым словам"""
+    # Сначала проверяем явные команды
     command_map = {
         "/strategy": "strategist",
         "/research": "researcher",
@@ -54,19 +56,31 @@ def get_agent_by_command(text):
         if text.startswith(cmd):
             return agent_id, text[len(cmd):].strip()
     
+    # Если нет команды — проверяем ключевые слова (регистр не важен)
     text_lower = text.lower()
-    if any(word in text_lower for word in ["нарисуй", "дизайн", "логотип", "цвет", "стиль"]):
+    
+    # Дизайнер
+    if any(word in text_lower for word in ["нарисуй", "дизайн", "логотип", "цвет", "стиль", "картинк", "изображени"]):
         return "designer", text
-    if any(word in text_lower for word in ["стратеги", "план", "развитие", "перспективы"]):
+    
+    # Стратег
+    if any(word in text_lower for word in ["стратеги", "план", "развитие", "перспективы", "будущее", "цель"]):
         return "strategist", text
-    if any(word in text_lower for word in ["напиши", "текст", "пост", "статья", "стих"]):
+    
+    # Копирайтер
+    if any(word in text_lower for word in ["напиши", "текст", "пост", "статья", "стих", "рассказ", "сочини"]):
         return "writer", text
-    if any(word in text_lower for word in ["код", "программа", "скрипт", "функция"]):
+    
+    # Разработчик
+    if any(word in text_lower for word in ["код", "программа", "скрипт", "функция", "баг", "ошибка", "алгоритм"]):
         return "developer", text
-    if any(word in text_lower for word in ["исследуй", "найди", "данные", "информация"]):
+    
+    # Исследователь
+    if any(word in text_lower for word in ["исследуй", "найди", "данные", "информация", "поиск", "факт"]):
         return "researcher", text
+    
+    # По умолчанию — Менеджер (он самый универсальный)
     return "pm", text
-
 def process_message(message_text):
     if message_text.lower() in ["/start", "привет", "здарова", "хай"]:
         team_list = "\n".join([f"{a['name']} — {a['role']}" for a in config["agents"]])
