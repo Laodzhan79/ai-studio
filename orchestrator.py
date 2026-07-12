@@ -5,11 +5,15 @@ import random
 import google.generativeai as genai
 import replicate
 
+from dotenv import load_dotenv
+# Загружаем переменные из .env
+load_dotenv()
+
 # === НАСТРОЙКИ ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "REPLACED")
 CHAT_ID = os.getenv("CHAT_ID", "REPLACED")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "REPLACED")
-REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
+#REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 
 # Настройка Gemini (старая библиотека, но она работает с v1beta)
 genai.configure(api_key=GEMINI_API_KEY)
