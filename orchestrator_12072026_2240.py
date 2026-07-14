@@ -4,6 +4,7 @@ import os
 import uuid
 import base64
 import re
+import google.generativeai as genai
 from dotenv import load_dotenv
 import urllib3
 
@@ -17,19 +18,29 @@ load_dotenv()
 # ============================================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 GIGACHAT_CLIENT_ID = os.getenv("GIGACHAT_CLIENT_ID")
 GIGACHAT_CLIENT_SECRET = os.getenv("GIGACHAT_CLIENT_SECRET")
 
 # ============================================
-# 2. ЗАГРУЗКА АГЕНТОВ
+# 2. ИНИЦИАЛИЗАЦИЯ GEMINI
+# ============================================
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    gemini_model = genai.GenerativeModel('gemini-flash-latest')
+else:
+    gemini_model = None
+
+# ============================================
+# 3. ЗАГРУЗКА АГЕНТОВ
 # ============================================
 with open("agents_config.json", "r", encoding="utf-8") as f:
     config = json.load(f)
     agents = {agent["id"]: agent for agent in config["agents"]}
 
 # ============================================
-# 3. GIGACHAT: ПОЛУЧЕНИЕ ТОКЕНА
+# 4. GIGACHAT: ПОЛУЧЕНИЕ ТОКЕНА И ГЕНЕРАЦИЯ
 # ============================================
 def get_gigachat_token():
     if not GIGACHAT_CLIENT_ID or not GIGACHAT_CLIENT_SECRET:
@@ -56,9 +67,6 @@ def get_gigachat_token():
     except Exception as e:
         return f"⚠️ Ошибка получения токена: {str(e)}"
 
-# ============================================
-# 4. GIGACHAT: ГЕНЕРАЦИЯ КАРТИНКИ
-# ============================================
 def generate_image(prompt):
     access_token = get_gigachat_token()
     if isinstance(access_token, str) and access_token.startswith("⚠️"):
@@ -115,27 +123,34 @@ def generate_image(prompt):
         return f"⚠️ Ошибка генерации: {str(e)}"
 
 # ============================================
-# 5. GIGACHAT: ТЕКСТОВЫЙ ОТВЕТ (ДЛЯ ВСЕХ АГЕНТОВ)
+# 5. ВЫЗОВ АГЕНТА
 # ============================================
-def call_gigachat_text(agent, user_message):
-    """Отправляет текстовый запрос в GigaChat"""
+def call_agent(agent_id, user_message):
+    agent = agents.get(agent_id)
+    if not agent:
+        return f"❌ Агент {agent_id} не найден"
+
+    # Дизайнер → картинка
+    if agent_id == "designer":
+        return generate_image(user_message)
+
+    # Все остальные → GigaChat (вместо Gemini)
+    return call_gigachat_text(prompt)
+
+def call_gigachat_text(prompt):
+    """Отправляет текстовый запрос в GigaChat (без картинок)"""
     access_token = get_gigachat_token()
     if isinstance(access_token, str) and access_token.startswith("⚠️"):
         return access_token
 
     url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
-    
-    prompt = f"{agent['prompt']}\n\nПользователь: {user_message}\n\nОтвет:"
-    
     payload = {
         "model": "GigaChat-2-Max",
         "messages": [
             {"role": "system", "content": "Ты — полезный AI-ассистент. Отвечай на вопросы пользователя."},
             {"role": "user", "content": prompt}
         ],
-        "profanity_check": False,
-        "temperature": 0.7,
-        "max_tokens": 2000
+        "profanity_check": False
     }
     headers = {
         "Content-Type": "application/json",
@@ -150,28 +165,13 @@ def call_gigachat_text(agent, user_message):
         return data["choices"][0]["message"]["content"]
     except Exception as e:
         return f"⚠️ Ошибка GigaChat: {str(e)}"
-
 # ============================================
-# 6. ВЫЗОВ АГЕНТА
-# ============================================
-def call_agent(agent_id, user_message):
-    agent = agents.get(agent_id)
-    if not agent:
-        return f"❌ Агент {agent_id} не найден"
-
-    # Дизайнер → картинка
-    if agent_id == "designer":
-        return generate_image(user_message)
-
-    # Все остальные → GigaChat (текст)
-    return call_gigachat_text(agent, user_message)
-
-# ============================================
-# 7. ОПРЕДЕЛЕНИЕ АГЕНТА ПО ЗАПРОСУ
+# 6. ОПРЕДЕЛЕНИЕ АГЕНТА ПО ЗАПРОСУ
 # ============================================
 def detect_agent(text):
     text_lower = text.lower().strip()
 
+    # Явные команды
     commands = {
         "/strategy": "strategist",
         "/research": "researcher",
@@ -187,6 +187,7 @@ def detect_agent(text):
             query = text[len(cmd):].strip()
             return agent_id, query if query else ""
 
+    # Ключевые слова
     keywords = {
         "designer": ["нарисуй", "дизайн", "логотип", "картинк", "изображени", "цвет", "стиль"],
         "researcher": ["исследуй", "найди", "данные", "информаци", "поиск", "анализ"],
@@ -203,7 +204,7 @@ def detect_agent(text):
     return "pm", text
 
 # ============================================
-# 8. ОТПРАВКА СООБЩЕНИЙ
+# 7. ОТПРАВКА СООБЩЕНИЙ
 # ============================================
 def send_telegram_message(text, chat_id=CHAT_ID):
     if not TELEGRAM_TOKEN:
@@ -212,7 +213,7 @@ def send_telegram_message(text, chat_id=CHAT_ID):
     requests.post(url, json={"chat_id": chat_id, "text": text})
 
 # ============================================
-# 9. РАСПРЕДЕЛЕНИЕ СЛОЖНЫХ ЗАДАЧ
+# 8. РАСПРЕДЕЛЕНИЕ СЛОЖНЫХ ЗАДАЧ
 # ============================================
 def distribute_task(query):
     task_map = {
@@ -227,9 +228,9 @@ def distribute_task(query):
         "стратегия": ["strategist"],
         "seo": ["devops"],
         "аудит": ["devops"],
-        "презентаци": ["writer", "researcher"],
-        "концепци": ["designer", "strategist"],
-        "рынок": ["researcher", "strategist"]
+        "презентаци": ["writer", "researcher"],  # <-- добавил
+        "концепци": ["designer", "strategist"],   # <-- добавил
+        "рынок": ["researcher", "strategist"]     # <-- добавил
     }
 
     query_lower = query.lower()
@@ -270,36 +271,10 @@ def format_report(results):
     return report
 
 # ============================================
-# 10. ГЛАВНАЯ ЛОГИКА
+# 9. ГЛАВНАЯ ЛОГИКА
 # ============================================
 def process_message(message_text):
-    # === ДИАГНОСТИКА ===
-    if message_text.lower() == "/debug":
-        test_phrases = [
-            "/design нарисуй кота",
-            "нарисуй кота",
-            "/write напиши стих",
-            "исследуй рынок",
-            "/pm составь план задач"
-        ]
-        report = "🔧 **Диагностика detect_agent:**\n\n"
-        for phrase in test_phrases:
-            agent_id, query = detect_agent(phrase)
-            report += f"`{phrase}` → {agent_id}, query=`{query}`\n"
-        
-        report += "\n---\n\n🔧 **Диагностика distribute_task:**\n"
-        complex_phrases = [
-            "Проанализируй состояние рынка ИИ-стартапов",
-            "Создай визуальную концепцию для AI-студии"
-        ]
-        for phrase in complex_phrases:
-            tasks = distribute_task(phrase)
-            agents_list = list(tasks.keys())
-            report += f"`{phrase[:30]}...` → {agents_list}\n"
-        
-        return report
-
-    # === ПРИВЕТСТВИЯ ===
+    # Приветствия и команды
     if message_text.lower() in ["/start", "привет", "хай", "здарова"]:
         team_list = "\n".join([f"{a['name']} — {a['role']}" for a in config["agents"]])
         return f"👋 Привет! Я твой AI-штаб.\n\nКоманда:\n{team_list}\n\nНапиши запрос или используй команды:\n/design — картинка\n/write — текст\n/research — исследование\n/strategy — стратегия\n/code — код\n/seo — аудит"
@@ -308,19 +283,17 @@ def process_message(message_text):
         team_list = "\n".join([f"{a['name']} — {a['role']}" for a in config["agents"]])
         return f"🤖 Моя команда:\n\n{team_list}"
 
-    # === ОБРАБОТКА КОМАНД ===
+    # Проверяем, есть ли команда (/design, /write и т.д.)
     if message_text.startswith("/"):
         agent_id, query = detect_agent(message_text)
-        if not query:
+        if query:
             send_telegram_message(f"🤖 {agents[agent_id]['name']} обрабатывает запрос...")
-            result = call_agent(agent_id, "")
+            result = call_agent(agent_id, query)
             return f"🧠 {agents[agent_id]['name']}:\n\n{result}"
-        
-        send_telegram_message(f"🤖 {agents[agent_id]['name']} обрабатывает запрос...")
-        result = call_agent(agent_id, query)
-        return f"🧠 {agents[agent_id]['name']}:\n\n{result}"
+        else:
+            return f"🤔 Агент {agents[agent_id]['name']} ждёт твой запрос."
 
-    # === СЛОЖНЫЕ ЗАДАЧИ ===
+    # Если нет команды — пробуем сложную задачу
     tasks = distribute_task(message_text)
 
     if len(tasks) > 1:
@@ -335,7 +308,7 @@ def process_message(message_text):
         result = call_agent(agent_id, sub_task)
         return f"🧠 {agents[agent_id]['name']}:\n\n{result}"
 
-    # === ЕСЛИ НИЧЕГО НЕ ПОДОШЛО ===
+    # Если ничего не подошло — Менеджер
     send_telegram_message("🤖 Менеджер обрабатывает запрос...")
     result = call_agent("pm", message_text)
     return f"🧠 Менеджер:\n\n{result}"
