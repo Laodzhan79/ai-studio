@@ -80,6 +80,7 @@ async def generate_image(prompt):
 
     try:
         async with aiohttp.ClientSession() as session:
+            # 1. Запрос на генерацию картинки
             async with session.post(url, headers=headers, json=payload, ssl=False, timeout=120) as response:
                 data = await response.json()
                 content = data["choices"][0]["message"]["content"]
@@ -94,24 +95,33 @@ async def generate_image(prompt):
                     "Authorization": f"Bearer {access_token}"
                 }
 
+                # 2. Скачивание картинки
                 async with session.get(download_url, headers=download_headers, ssl=False, timeout=30) as img_response:
-                    if img_response.status == 200:
-                        file_path = "generated_image.jpg"
-                        with open(file_path, "wb") as f:
-                            f.write(await img_response.read())
-
-                        # Отправляем картинку в Telegram
-                        send_photo_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-                        with open(file_path, 'rb') as photo_file:
-                            files = {'photo': photo_file}
-                            data_payload = {'chat_id': CHAT_ID, 'caption': f"🎨 {prompt}"}
-                            async with session.post(send_photo_url, data=data_payload, files=files, timeout=30) as send_resp:
-                                if send_resp.status == 200:
-                                    return "✅ Картинка отправлена в чат!"
-                                else:
-                                    return f"⚠️ Ошибка отправки в Telegram: {send_resp.status}"
-                    else:
+                    if img_response.status != 200:
                         return f"⚠️ Ошибка скачивания: {img_response.status}"
+
+                    file_path = "generated_image.jpg"
+                    with open(file_path, "wb") as f:
+                        f.write(await img_response.read())
+
+                # 3. Отправка картинки в Telegram (правильный способ)
+                send_photo_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+                
+                # Открываем файл и отправляем через multipart/form-data
+                with open(file_path, 'rb') as photo_file:
+                    # Формируем данные для отправки
+                    form_data = aiohttp.FormData()
+                    form_data.add_field('chat_id', CHAT_ID)
+                    form_data.add_field('caption', f"🎨 {prompt}")
+                    form_data.add_field('photo', photo_file, filename='image.jpg', content_type='image/jpeg')
+                    
+                    async with session.post(send_photo_url, data=form_data, ssl=False, timeout=30) as send_resp:
+                        if send_resp.status == 200:
+                            return "✅ Картинка отправлена в чат!"
+                        else:
+                            text = await send_resp.text()
+                            return f"⚠️ Ошибка отправки в Telegram: {send_resp.status} - {text}"
+
     except Exception as e:
         return f"⚠️ Ошибка генерации: {str(e)}"
 
