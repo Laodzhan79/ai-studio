@@ -2,6 +2,23 @@ import os
 import logging
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
+# Простой HTTP-сервер для Render
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    
+    def log_message(self, format, *args):
+        pass  # Отключаем логи health-сервера, чтобы не засорять вывод
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    server.serve_forever()
+
+# Запускаем health-сервер в фоновом потоке
+Thread(target=run_health_server, daemon=True).start()
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -9,40 +26,17 @@ from telegram.ext import (
     MessageHandler,
     filters,
     CallbackContext,
-    CallbackQueryHandler
+    CallbackQueryHandler  # <-- ЭТОТ ИМПОРТ БЫЛ ПРОПУЩЕН!
 )
 from orchestrator import process_message
-
-# ============================================
-# HEALTH-СЕРВЕР ДЛЯ RENDER
-# ============================================
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def log_message(self, format, *args):
-        pass
-
-def run_health_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), HealthHandler)
-    server.serve_forever()
-
-Thread(target=run_health_server, daemon=True).start()
-
-# ============================================
-# НАСТРОЙКА ЛОГОВ
-# ============================================
+# Настройка логов
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("TELEGRAM_TOKEN", "REPLACED")
 
-# ============================================
-# ОБРАБОТЧИКИ
-# ============================================
 async def start(update: Update, context: CallbackContext):
+    """Кнопки выбора агента"""
     keyboard = [
         [InlineKeyboardButton("🧠 Стратег", callback_data="strategist")],
         [InlineKeyboardButton("🔍 Исследователь", callback_data="researcher")],
@@ -55,51 +49,56 @@ async def start(update: Update, context: CallbackContext):
         "👋 Привет! Я твой AI-штаб.\nВыбери агента или просто напиши вопрос.\n\n/team — показать команду",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-
 async def send_long_message(update: Update, text: str):
-    MAX_LENGTH = 4000
+    """Отправляет длинное сообщение, разбивая на части при необходимости"""
+    MAX_LENGTH = 4000  # Чуть меньше лимита Telegram (4096)
+    
+    # Если текст короткий — отправляем как есть
     if len(text) <= MAX_LENGTH:
         await update.message.reply_text(text)
         return
+    
+    # Если длинный — разбиваем по предложениям
     parts = []
     current_part = ""
+    
     for sentence in text.split('. '):
         if len(current_part) + len(sentence) + 2 <= MAX_LENGTH:
             current_part += sentence + '. '
         else:
             parts.append(current_part.strip())
             current_part = sentence + '. '
+    
     if current_part:
         parts.append(current_part.strip())
+    
+    # Отправляем все части по очереди
     for part in parts:
         await update.message.reply_text(part)
 
 async def handle_message(update: Update, context: CallbackContext):
-    try:
-        user_message = update.message.text
-        response = await process_message(user_message)
-        await send_long_message(update, response)
-    except Exception as e:
-        logger.error(f"Ошибка в handle_message: {e}")
-        await update.message.reply_text("⚠️ Произошла ошибка. Попробуйте позже.")
+    user_message = update.message.text
+    response = process_message(user_message)
+    
+    # Используем новую функцию для отправки
+    await send_long_message(update, response)
 
 async def button_callback(update: Update, context: CallbackContext):
+    """Кнопка выбрана — просим написать запрос"""
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(
         f"🤖 Агент {query.data} выбран.\nНапиши свой запрос прямо сюда."
     )
 
-# ============================================
-# ЗАПУСК
-# ============================================
 def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("team", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(CallbackQueryHandler(button_callback))
-    print("🤖 Бот запущен (асинхронная версия)...")
+    app.add_handler(CallbackQueryHandler(button_callback))  # <-- Теперь работает!
+    
+    print("🤖 Бот запущен и слушает сообщения...")
     app.run_polling()
 
 if __name__ == "__main__":

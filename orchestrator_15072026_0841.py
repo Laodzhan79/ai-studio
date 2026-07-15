@@ -1,14 +1,15 @@
 import json
+import requests
 import os
 import uuid
 import base64
 import re
-import asyncio
-import aiohttp
-import urllib3
 from dotenv import load_dotenv
+import urllib3
 
+# Отключаем SSL-предупреждения для GigaChat
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 load_dotenv()
 
 # ============================================
@@ -16,6 +17,7 @@ load_dotenv()
 # ============================================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+
 GIGACHAT_CLIENT_ID = os.getenv("GIGACHAT_CLIENT_ID")
 GIGACHAT_CLIENT_SECRET = os.getenv("GIGACHAT_CLIENT_SECRET")
 
@@ -27,9 +29,9 @@ with open("agents_config.json", "r", encoding="utf-8") as f:
     agents = {agent["id"]: agent for agent in config["agents"]}
 
 # ============================================
-# 3. GIGACHAT: ПОЛУЧЕНИЕ ТОКЕНА (АСИНХРОННО)
+# 3. GIGACHAT: ПОЛУЧЕНИЕ ТОКЕНА
 # ============================================
-async def get_gigachat_token():
+def get_gigachat_token():
     if not GIGACHAT_CLIENT_ID or not GIGACHAT_CLIENT_SECRET:
         return "⚠️ Нет Client ID или Secret в .env"
 
@@ -47,18 +49,18 @@ async def get_gigachat_token():
     data = {"scope": "GIGACHAT_API_PERS"}
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, data=data, ssl=False, timeout=30) as response:
-                token_data = await response.json()
-                return token_data.get("access_token")
+        response = requests.post(url, headers=headers, data=data, timeout=30, verify=False)
+        response.raise_for_status()
+        token_data = response.json()
+        return token_data.get("access_token")
     except Exception as e:
         return f"⚠️ Ошибка получения токена: {str(e)}"
 
 # ============================================
-# 4. GIGACHAT: ГЕНЕРАЦИЯ КАРТИНКИ (АСИНХРОННО)
+# 4. GIGACHAT: ГЕНЕРАЦИЯ КАРТИНКИ
 # ============================================
-async def generate_image(prompt):
-    access_token = await get_gigachat_token()
+def generate_image(prompt):
+    access_token = get_gigachat_token()
     if isinstance(access_token, str) and access_token.startswith("⚠️"):
         return access_token
 
@@ -79,53 +81,52 @@ async def generate_image(prompt):
     }
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload, ssl=False, timeout=120) as response:
-                data = await response.json()
-                content = data["choices"][0]["message"]["content"]
-                match = re.search(r'<img src="([^"]+)"', content)
-                if not match:
-                    return f"⚠️ Не найден ID картинки: {content[:200]}"
+        response = requests.post(url, headers=headers, json=payload, timeout=120, verify=False)
+        response.raise_for_status()
+        data = response.json()
 
-                file_id = match.group(1)
-                download_url = f"https://gigachat.devices.sberbank.ru/api/v1/files/{file_id}/content"
-                download_headers = {
-                    "Accept": "application/octet-stream",
-                    "Authorization": f"Bearer {access_token}"
-                }
+        content = data["choices"][0]["message"]["content"]
+        match = re.search(r'<img src="([^"]+)"', content)
+        if not match:
+            return f"⚠️ Не найден ID картинки: {content[:200]}"
 
-                async with session.get(download_url, headers=download_headers, ssl=False, timeout=30) as img_response:
-                    if img_response.status == 200:
-                        file_path = "generated_image.jpg"
-                        with open(file_path, "wb") as f:
-                            f.write(await img_response.read())
+        file_id = match.group(1)
+        download_url = f"https://gigachat.devices.sberbank.ru/api/v1/files/{file_id}/content"
+        download_headers = {
+            "Accept": "application/octet-stream",
+            "Authorization": f"Bearer {access_token}"
+        }
+        image_response = requests.get(download_url, headers=download_headers, timeout=30, verify=False)
 
-                        # Отправляем картинку в Telegram
-                        send_photo_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-                        with open(file_path, 'rb') as photo_file:
-                            files = {'photo': photo_file}
-                            data_payload = {'chat_id': CHAT_ID, 'caption': f"🎨 {prompt}"}
-                            async with session.post(send_photo_url, data=data_payload, files=files, timeout=30) as send_resp:
-                                if send_resp.status == 200:
-                                    return "✅ Картинка отправлена в чат!"
-                                else:
-                                    return f"⚠️ Ошибка отправки в Telegram: {send_resp.status}"
-                    else:
-                        return f"⚠️ Ошибка скачивания: {img_response.status}"
+        if image_response.status_code == 200:
+            file_path = "generated_image.jpg"
+            with open(file_path, "wb") as f:
+                f.write(image_response.content)
+
+            send_photo_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+            files = {'photo': open(file_path, 'rb')}
+            data_payload = {'chat_id': CHAT_ID, 'caption': f"🎨 {prompt}"}
+            requests.post(send_photo_url, files=files, data=data_payload)
+            return "✅ Картинка отправлена в чат!"
+        else:
+            return f"⚠️ Ошибка скачивания: {image_response.status_code}, ссылка: {download_url}"
+
     except Exception as e:
         return f"⚠️ Ошибка генерации: {str(e)}"
 
 # ============================================
-# 5. GIGACHAT: ТЕКСТОВЫЙ ОТВЕТ (АСИНХРОННО)
+# 5. GIGACHAT: ТЕКСТОВЫЙ ОТВЕТ (ДЛЯ ВСЕХ АГЕНТОВ)
 # ============================================
-async def call_gigachat_text(agent, user_message):
-    access_token = await get_gigachat_token()
+def call_gigachat_text(agent, user_message):
+    """Отправляет текстовый запрос в GigaChat"""
+    access_token = get_gigachat_token()
     if isinstance(access_token, str) and access_token.startswith("⚠️"):
         return access_token
 
     url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+    
     prompt = f"{agent['prompt']}\n\nПользователь: {user_message}\n\nОтвет:"
-
+    
     payload = {
         "model": "GigaChat-2-Max",
         "messages": [
@@ -143,30 +144,34 @@ async def call_gigachat_text(agent, user_message):
     }
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload, ssl=False, timeout=60) as response:
-                data = await response.json()
-                return data["choices"][0]["message"]["content"]
+        response = requests.post(url, headers=headers, json=payload, timeout=60, verify=False)
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
     except Exception as e:
         return f"⚠️ Ошибка GigaChat: {str(e)}"
 
 # ============================================
-# 6. ВЫЗОВ АГЕНТА (АСИНХРОННО)
+# 6. ВЫЗОВ АГЕНТА
 # ============================================
-async def call_agent(agent_id, user_message):
+def call_agent(agent_id, user_message):
     agent = agents.get(agent_id)
     if not agent:
         return f"❌ Агент {agent_id} не найден"
 
+    # Дизайнер → картинка
     if agent_id == "designer":
-        return await generate_image(user_message)
-    return await call_gigachat_text(agent, user_message)
+        return generate_image(user_message)
+
+    # Все остальные → GigaChat (текст)
+    return call_gigachat_text(agent, user_message)
 
 # ============================================
 # 7. ОПРЕДЕЛЕНИЕ АГЕНТА ПО ЗАПРОСУ
 # ============================================
 def detect_agent(text):
     text_lower = text.lower().strip()
+
     commands = {
         "/strategy": "strategist",
         "/research": "researcher",
@@ -194,20 +199,17 @@ def detect_agent(text):
     for agent_id, words in keywords.items():
         if any(w in text_lower for w in words):
             return agent_id, text
+
     return "pm", text
 
 # ============================================
-# 8. ОТПРАВКА СООБЩЕНИЙ (АСИНХРОННО)
+# 8. ОТПРАВКА СООБЩЕНИЙ
 # ============================================
-async def send_telegram_message(text, chat_id=CHAT_ID):
-    if not TELEGRAM_TOKEN or not chat_id:
+def send_telegram_message(text, chat_id=CHAT_ID):
+    if not TELEGRAM_TOKEN:
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        async with aiohttp.ClientSession() as session:
-            await session.post(url, json={"chat_id": chat_id, "text": text}, timeout=15)
-    except Exception:
-        pass
+    requests.post(url, json={"chat_id": chat_id, "text": text})
 
 # ============================================
 # 9. РАСПРЕДЕЛЕНИЕ СЛОЖНЫХ ЗАДАЧ
@@ -229,44 +231,52 @@ def distribute_task(query):
         "концепци": ["designer", "strategist"],
         "рынок": ["researcher", "strategist"]
     }
+
     query_lower = query.lower()
     used_agents = []
     for keyword, agents_list in task_map.items():
         if keyword in query_lower:
             used_agents.extend(agents_list)
+
     if not used_agents:
         return {"pm": query}
+
     used_agents = list(set(used_agents))
     tasks = {}
     for agent_id in used_agents:
         agent = agents.get(agent_id)
         if agent:
-            tasks[agent_id] = f"{query}\n\nТвоя роль: {agent['role']}. Ответь на запрос с этой позиции."
+            sub_task = f"{query}\n\nТвоя роль: {agent['role']}. Ответь на запрос с этой позиции."
+            tasks[agent_id] = sub_task
+
     return tasks
 
-async def collect_results(tasks):
+def collect_results(tasks):
     results = {}
     for agent_id, sub_task in tasks.items():
         agent = agents.get(agent_id)
         if agent:
-            results[agent['name']] = await call_agent(agent_id, sub_task)
+            results[agent['name']] = call_agent(agent_id, sub_task)
     return results
 
 def format_report(results):
     if not results:
         return "⚠️ Не удалось собрать ответы от агентов."
+
     report = "📊 **Командный отчёт**\n\n"
     for agent_name, response in results.items():
         report += f"### {agent_name}\n{response}\n\n---\n\n"
+
     return report
 
 # ============================================
-# 10. ГЛАВНАЯ ЛОГИКА (АСИНХРОННАЯ)
+# 10. ГЛАВНАЯ ЛОГИКА
 # ============================================
-async def process_message(message_text):
-    # === ДИАГНОСТИКА ===
+def process_message(message_text):
+    # === ДИАГНОСТИКА (упрощена, чтобы не грузить Render) ===
     if message_text.lower() == "/debug":
-        return "🔧 Бот работает (асинхронная версия). Команды: /design, /write, /research, /strategy, /code, /seo"
+        return "🔧 Бот работает. Версия: стабильная. Используй команды: /design, /write, /research, /strategy, /code, /seo"
+
 
     # === ПРИВЕТСТВИЯ ===
     if message_text.lower() in ["/start", "привет", "хай", "здарова"]:
@@ -280,25 +290,31 @@ async def process_message(message_text):
     # === ОБРАБОТКА КОМАНД ===
     if message_text.startswith("/"):
         agent_id, query = detect_agent(message_text)
-        await send_telegram_message(f"🤖 {agents[agent_id]['name']} обрабатывает запрос...")
-        result = await call_agent(agent_id, query)
+        if not query:
+            send_telegram_message(f"🤖 {agents[agent_id]['name']} обрабатывает запрос...")
+            result = call_agent(agent_id, "")
+            return f"🧠 {agents[agent_id]['name']}:\n\n{result}"
+        
+        send_telegram_message(f"🤖 {agents[agent_id]['name']} обрабатывает запрос...")
+        result = call_agent(agent_id, query)
         return f"🧠 {agents[agent_id]['name']}:\n\n{result}"
 
     # === СЛОЖНЫЕ ЗАДАЧИ ===
     tasks = distribute_task(message_text)
+
     if len(tasks) > 1:
-        await send_telegram_message("🧠 Анализирую запрос... Распределяю задачи между агентами.")
-        results = await collect_results(tasks)
+        send_telegram_message("🧠 Анализирую запрос... Распределяю задачи между агентами.")
+        results = collect_results(tasks)
         return format_report(results)
 
     if tasks:
         agent_id = list(tasks.keys())[0]
         sub_task = tasks[agent_id]
-        await send_telegram_message(f"🤖 {agents[agent_id]['name']} обрабатывает запрос...")
-        result = await call_agent(agent_id, sub_task)
+        send_telegram_message(f"🤖 {agents[agent_id]['name']} обрабатывает запрос...")
+        result = call_agent(agent_id, sub_task)
         return f"🧠 {agents[agent_id]['name']}:\n\n{result}"
 
     # === ЕСЛИ НИЧЕГО НЕ ПОДОШЛО ===
-    await send_telegram_message("🤖 Менеджер обрабатывает запрос...")
-    result = await call_agent("pm", message_text)
+    send_telegram_message("🤖 Менеджер обрабатывает запрос...")
+    result = call_agent("pm", message_text)
     return f"🧠 Менеджер:\n\n{result}"
